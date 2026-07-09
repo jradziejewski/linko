@@ -1,4 +1,4 @@
-module boot.dev/linko
+module jradziejewski/linko
 
 go 1.26
 

@@ -14,7 +14,8 @@ import (
 
 	pkgerr "github.com/pkg/errors"
 
-	"boot.dev/linko/internal/store"
+	linkoerr "jradziejewski/linko/internal"
+	"jradziejewski/linko/internal/store"
 )
 
 type stackTracer interface {
@@ -131,16 +132,21 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 		if !ok {
 			return a
 		}
+		var attrs []slog.Attr
+		attrs = append(attrs, slog.Attr{
+			Key:   "message",
+			Value: slog.StringValue(err.Error()),
+		})
 		if stackErr, ok := errors.AsType[stackTracer](err); ok {
-			return slog.GroupAttrs("error", slog.Attr{
-				Key:   "message",
-				Value: slog.StringValue(stackErr.Error()),
-			}, slog.Attr{
+			attrs = append(attrs, slog.Attr{
 				Key:   "stack_trace",
 				Value: slog.StringValue(fmt.Sprintf("%+v", stackErr.StackTrace())),
 			})
 		}
-		return slog.String("error", fmt.Sprintf("%+v", err))
+
+		extraAttrs := linkoerr.Attrs(err)
+		attrs = append(attrs, extraAttrs...)
+		return slog.GroupAttrs("error", attrs...)
 	}
 	return a
 }
