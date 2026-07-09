@@ -50,7 +50,8 @@ func (s *server) start() error {
 		return err
 	}
 
-	s.logger.Debug("Linko is running", "url", fmt.Sprintf("http://localhost:%d", ln.Addr().(*net.TCPAddr).Port))
+	s.logger.Debug("Linko is running",
+		slog.String("url", fmt.Sprintf("http://localhost:%d", ln.Addr().(*net.TCPAddr).Port)))
 
 	if err := s.httpServer.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -62,7 +63,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r)
-			logger.Info("Served request", "method", r.Method, "path", r.URL.Path)
+			logger.Info("Served request", slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.String("client_ip", r.RemoteAddr))
 		})
 	}
 }
