@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -15,20 +16,21 @@ type server struct {
 	httpServer *http.Server
 	store      store.Store
 	cancel     context.CancelFunc
+	logger     *slog.Logger
 }
 
-func newServer(store store.Store, port int, cancel context.CancelFunc) *server {
+func newServer(store store.Store, port int, cancel context.CancelFunc, logger *slog.Logger) *server {
 	mux := http.NewServeMux()
 
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+	s := &server{
+		store:  store,
+		logger: logger,
+		cancel: cancel,
 	}
 
-	s := &server{
-		httpServer: srv,
-		store:      store,
-		cancel:     cancel,
+	s.httpServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: requestLogger(logger)(mux),
 	}
 
 	mux.HandleFunc("GET /", s.handlerIndex)
@@ -47,10 +49,22 @@ func (s *server) start() error {
 	if err != nil {
 		return err
 	}
+
+	s.logger.Info("Linko is running", "url", fmt.Sprintf("http://localhost:%d", ln.Addr().(*net.TCPAddr).Port))
+
 	if err := s.httpServer.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+			logger.Info("Served request", "method", r.Method, "path", r.URL.Path)
+		})
+	}
 }
 
 func (s *server) shutdown(ctx context.Context) error {
