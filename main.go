@@ -14,7 +14,8 @@ import (
 
 	pkgerr "github.com/pkg/errors"
 
-	linkoerr "jradziejewski/linko/internal"
+	"jradziejewski/linko/internal/build"
+	linkoerr "jradziejewski/linko/internal/linkoerr"
 	"jradziejewski/linko/internal/store"
 )
 
@@ -41,7 +42,15 @@ func main() {
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+	env := os.Getenv("ENV")
+	hostname, _ := os.Hostname()
 	logger, closeLogger, err := initializeLogger(os.Getenv("LINKO_LOG_FILE"))
+	logger = logger.With(
+		slog.String("git_sha", build.GitSHA),
+		slog.String("build_time", build.BuildTime),
+		slog.String("env", env),
+		slog.String("hostname", hostname),
+	)
 	if err != nil {
 		slog.Error("failed to create store", "error", err)
 		os.Exit(1)
