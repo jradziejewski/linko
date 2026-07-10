@@ -21,6 +21,11 @@ import (
 	pkgerr "github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"jradziejewski/linko/internal/build"
 	linkoerr "jradziejewski/linko/internal/linkoerr"
@@ -39,6 +44,19 @@ type multiError interface {
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	shutdownTracing, err := initTracing(ctx)
+	if err != nil {
+		fmt.Errorf("failed to initialize tracing: %v", err)
+		os.Exit(1)
+	}
+
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			fmt.Errorf("failed to shutdown tracing: %v", err)
+		}
+	}()
 
 	httpPort := flag.Int("port", 8899, "port to listen on")
 	dataDir := flag.String("data", "./data", "directory to store data")
@@ -59,6 +77,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 		slog.String("env", env),
 		slog.String("hostname", hostname),
 	)
+
 	if err != nil {
 		slog.Error("failed to create store", "error", err)
 		os.Exit(1)
@@ -137,6 +156,26 @@ func metricsMiddleware(next http.Handler) http.Handler {
 }
 
 type closeFunc func() error
+
+var tracer = otel.Tracer("jradziejewski/linko")
+
+func initTracing(ctx context.Context) (func(context.Context) error, error) {
+	exp, err := otlptracegrpc.New(ctx, otlptracegrpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exp,
+			sdktrace.WithBatchTimeout(2*time.Second)),
+		sdktrace.WithResource(resource.Default()),
+	)
+
+	otel.SetTracerProvider(tp)
+	tracer = tp.Tracer("jradziejewski/linko")
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	return tp.Shutdown, nil
+}
 
 func initializeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 	var stderrHandler slog.Handler
