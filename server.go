@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"jradziejewski/linko/internal/store"
 )
@@ -59,11 +61,77 @@ func (s *server) start() error {
 	return nil
 }
 
+type spyReadCloser struct {
+	io.ReadCloser
+	bytesRead int
+}
+
+type spyResponseWriter struct {
+	http.ResponseWriter
+	bytesWritten int
+	statusCode   int
+}
+
+const logContextKey = "log_context"
+
+type LogContext struct {
+	Username string
+}
+
+func (w *spyResponseWriter) Write(p []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+
+	n, err := w.ResponseWriter.Write(p)
+	w.bytesWritten += n
+
+	return n, err
+}
+
+func (w *spyResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r)
-			logger.Info("Served request", slog.String("method", r.Method), slog.String("path", r.URL.Path), slog.String("client_ip", r.RemoteAddr))
+			start := time.Now()
+
+			sr := &spyReadCloser{ReadCloser: r.Body}
+			r.Body = sr
+			logCtx := &LogContext{}
+			r = r.WithContext(context.WithValue(r.Context(), logContextKey, logCtx))
+
+			sw := &spyResponseWriter{ResponseWriter: w}
+
+			next.ServeHTTP(sw, r)
+
+			statusCode := sw.statusCode
+			if sw.statusCode == 0 {
+				statusCode = http.StatusOK
+			}
+
+			args := []any{
+				"method", r.Method,
+				"path", r.URL.Path,
+				"client_ip", r.RemoteAddr,
+				slog.Duration("duration", time.Since(start)),
+				"request_body_bytes", sr.bytesRead,
+				"response_status", statusCode,
+				"response_body_bytes", sw.bytesWritten,
+			}
+
+			if logCtx.Username != "" {
+				args = append(args, "user", logCtx.Username)
+			}
+
+			logger.Info("Served request", args...)
+
+			if logCtx.Username != "" {
+				logger.Info("Served user", "username", logCtx.Username)
+			}
 		})
 	}
 }
