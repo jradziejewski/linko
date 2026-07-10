@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"jradziejewski/linko/internal/store"
@@ -63,6 +64,21 @@ func (s *server) start() error {
 	}
 	return nil
 }
+
+func (s *server) shutdown(ctx context.Context) error {
+	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *server) handlerShutdown(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("ENV") == "production" {
+		http.NotFound(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	go s.cancel()
+}
+
+// LOGGERS
 
 type spyReadCloser struct {
 	io.ReadCloser
@@ -177,7 +193,7 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			args := []any{
 				"method", r.Method,
 				"path", r.URL.Path,
-				"client_ip", r.RemoteAddr,
+				"client_ip", redactIP(r.RemoteAddr),
 				slog.Duration("duration", time.Since(start)),
 				"request_body_bytes", sr.bytesRead,
 				"response_status", statusCode,
@@ -205,15 +221,27 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func (s *server) shutdown(ctx context.Context) error {
-	return s.httpServer.Shutdown(ctx)
-}
-
-func (s *server) handlerShutdown(w http.ResponseWriter, r *http.Request) {
-	if os.Getenv("ENV") == "production" {
-		http.NotFound(w, r)
-		return
+func redactIP(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// If there is no port, check if it's a raw IPv4 address
+		ip := net.ParseIP(addr)
+		if ip != nil && ip.To4() != nil {
+			parts := strings.Split(addr, ".")
+			if len(parts) == 4 {
+				parts[3] = "x"
+				return strings.Join(parts, ".")
+			}
+		}
+		return addr
 	}
-	w.WriteHeader(http.StatusOK)
-	go s.cancel()
+	ip := net.ParseIP(host)
+	if ip != nil && ip.To4() != nil {
+		parts := strings.Split(host, ".")
+		if len(parts) == 4 {
+			parts[3] = "x"
+			return strings.Join(parts, ".")
+		}
+	}
+	return addr
 }
