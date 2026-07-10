@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ func newServer(store store.Store, port int, cancel context.CancelFunc, logger *s
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: requestLogger(logger)(mux),
+		Handler: metricsMiddleware(requestID(requestLogger(logger)(mux))),
 	}
 
 	mux.HandleFunc("GET /", s.handlerIndex)
@@ -46,6 +47,8 @@ func newServer(store store.Store, port int, cancel context.CancelFunc, logger *s
 	mux.Handle("GET /api/stats", s.authMiddleware(http.HandlerFunc(s.handlerStats)))
 	mux.Handle("GET /api/urls", s.authMiddleware(http.HandlerFunc(s.handlerListURLs)))
 	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /debug/pprof/", http.HandlerFunc(pprof.Index))
+	mux.Handle("GET /debug/pprof/profile", http.HandlerFunc(pprof.Profile))
 	mux.HandleFunc("GET /{shortCode}", s.handlerRedirect)
 	mux.HandleFunc("POST /admin/shutdown", s.handlerShutdown)
 
