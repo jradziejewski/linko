@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -135,6 +136,21 @@ func (w *spyResponseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
+const requestIDKey contextKey = "request_id"
+
+func requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := r.Header.Get("X-Request-ID")
+		if reqID == "" {
+			reqID = rand.Text()
+		}
+		w.Header().Set("X-Request-ID", reqID)
+		r.Header.Set("X-Request-ID", reqID)
+		ctx := context.WithValue(r.Context(), requestIDKey, reqID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +186,10 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			if logCtx.Error != nil {
 				args = append(args, "error", logCtx.Error)
+			}
+
+			if reqID, ok := r.Context().Value(requestIDKey).(string); ok && reqID != "" {
+				args = append(args, "request_id", reqID)
 			}
 
 			logger.Info("Served request", args...)
